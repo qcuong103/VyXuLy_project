@@ -1,0 +1,231 @@
+//--------------------------------------//
+//   CLUB.ARDUINORAILWAYCONTROL.COM     //
+//                                      //
+//   MODULES | Crossing                 //
+//   V.1.2019  Steve Massikker          //
+//--------------------------------------//
+
+#include <Wire.h>
+#include <VarSpeedServo.h>
+
+void(* resetFunc) (void) = 0;
+
+VarSpeedServo barrier_1;
+VarSpeedServo barrier_2;
+
+// I/O PINS
+#define LAMP 4
+#define POWER_SERVO 7
+#define SERVO_1 14
+#define SERVO_2 15
+#define ALARM_1 16
+#define ALARM_2 17
+#define SENSOR_LEFT A6
+#define SENSOR_RIGHT A7
+
+
+
+// VARIABLES
+String inputString = "";
+byte dataFromI2C;
+static unsigned long millisPower;
+bool stringComplete = false;
+
+bool alarm_signals, tick_blink;
+bool trigger_s1, trigger_s2, latch_s1, latch_s2;
+bool ext_comm_blinking, ext_comm_lamp, ext_comm_barriers;
+bool barriers_lifting, barriers_lowering;
+bool crossing_blocked, barriers_open = true;
+
+void setup() {
+
+// Initialize I2C
+  Wire.begin(2);
+  Wire.onReceive(receiveI2C);
+
+// Initialize Serial (for debugging)
+  Serial.begin(9600);
+  inputString.reserve(4);
+
+// Initialize Pins
+  pinMode(POWER_SERVO, OUTPUT);
+  pinMode(LAMP, OUTPUT);
+  pinMode(SERVO_1, OUTPUT);
+  pinMode(SERVO_2, OUTPUT);
+  pinMode(ALARM_1, OUTPUT);
+  pinMode(ALARM_2, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+  barrier_1.attach(SERVO_1);
+  barrier_2.attach(SERVO_2);
+
+// DEFAULT POSITION - BARRIERS UP
+// SERVO 1 (CORNER) UP: 180 | DOWN: 25
+// SERVO 2 (HOUSE) UP: 180 | DOWN: 35
+// servo.write(angle,speed,discontinue) | Speed 0 or 255: maximum, 1-254 from lower to higher speed
+  digitalWrite(POWER_SERVO, HIGH);
+  digitalWrite(LED_BUILTIN, HIGH); 
+  delay(30);
+  barrier_1.write(180,42,false);
+  delay(30);
+  barrier_2.write(180,42,false);
+  millisPower = millis();
+}
+
+void loop() {
+
+  // URB COMMAND PARSING
+  if (dataFromI2C != 0) {
+    switch (dataFromI2C) {
+
+    // RESET
+    case 99: resetFunc(); break;
+
+    // LAMP
+    case 100: digitalWrite(LAMP, LOW); break;
+    case 101: digitalWrite(LAMP, HIGH); break;  
+    
+    // BLINKING
+    case 102: ext_comm_blinking = false; break;
+    case 103: ext_comm_blinking = true; break;  
+
+    // BARRIERS
+    case 104: ext_comm_barriers = false; break;
+    case 105: ext_comm_barriers = true; break; 
+    case 106: barriers_lowering = true; break;
+    case 107: barriers_lifting = true; break; 
+
+    }
+
+    dataFromI2C = 0;
+  }
+
+  // SERIAL COMMANDS & APP COMMANDS
+  if (stringComplete) {
+
+    if (inputString.charAt(0) =='l') {
+      if (inputString.charAt(1) =='a') {
+        if (inputString.charAt(2) =='1') digitalWrite(LAMP, HIGH);
+        if (inputString.charAt(2) =='0') digitalWrite(LAMP, LOW);        
+      }
+      if (inputString.charAt(1) =='b') {
+        if (inputString.charAt(2) =='1') ext_comm_blinking = true;
+        if (inputString.charAt(2) =='0') ext_comm_blinking = false;        
+      }      
+    }
+
+    if (inputString.charAt(0) =='g') {
+      if (inputString.charAt(1) =='a') {
+        if (inputString.charAt(2) =='1') ext_comm_barriers = true;
+        if (inputString.charAt(2) =='0') ext_comm_barriers = false;     
+      }
+      if (ext_comm_barriers) {
+        if (inputString.charAt(1) =='b') {
+          if (inputString.charAt(2) =='1') barriers_lowering = true;
+          if (inputString.charAt(2) =='0') barriers_lifting = true; 
+        }         
+      }      
+    }    
+
+    inputString = "";
+    stringComplete = false;
+  }
+
+  // SENSORS CODE
+  if (analogRead(SENSOR_LEFT) > 100) {
+    trigger_s1 = true;
+    latch_s1 = true;
+  }
+  else trigger_s1 = false;
+    
+  if (analogRead(SENSOR_RIGHT) > 100) {
+    trigger_s2 = true;
+    latch_s2 = true; 
+  }
+  else trigger_s2 = false;  
+
+  if (latch_s1 && latch_s2 && !trigger_s1 && !trigger_s2) {
+    latch_s1 = false;    
+    latch_s2 = false;     
+  }
+
+  if (latch_s1 || latch_s2) {
+    crossing_blocked = true;
+    digitalWrite(LED_BUILTIN, HIGH);
+  }
+  else {
+    crossing_blocked = false;
+    digitalWrite(LED_BUILTIN, LOW);    
+  }
+
+
+  // BARRIERS CONTROL
+  if (!ext_comm_barriers) {
+    if (barriers_open && crossing_blocked) barriers_lowering = true;
+    if (!barriers_open && !crossing_blocked) barriers_lifting = true;    
+  }
+
+
+  // SERVO CONTROL
+  if (barriers_lifting) { // Lifting of barriers
+    digitalWrite(POWER_SERVO, HIGH);
+    delay(30);
+    barrier_1.write(180,30,false);
+    delay(30);
+    barrier_2.write(180,36,false);
+    millisPower = millis();
+    barriers_lifting = false;
+    barriers_open = true;
+  }
+
+  if (barriers_lowering) { // Lowering of barriers
+    digitalWrite(POWER_SERVO, HIGH);
+    delay(30);
+    barrier_1.write(30,42,false);
+    delay(30);
+    barrier_2.write(30,46,false);
+    millisPower = millis();
+    barriers_lowering = false;
+    barriers_open = false;    
+  }
+
+  // BLINK CODE
+  if (ext_comm_blinking || crossing_blocked) {
+    static unsigned long blinkMillis;
+    if (millis() > (blinkMillis + 400)) { // 500 - blinking optimal period
+      tick_blink = !tick_blink;
+      blinkMillis = millis();
+    }
+
+    digitalWrite(ALARM_1, tick_blink);
+    digitalWrite(ALARM_2, !tick_blink);
+  }
+  else {
+    digitalWrite(ALARM_1, LOW);
+    digitalWrite(ALARM_2, LOW);
+  }
+
+  // POWER OFF CODE
+  if (millis() > (millisPower + 2500)) {
+    digitalWrite(POWER_SERVO, LOW);
+    digitalWrite(LED_BUILTIN, LOW); 
+  }
+
+}
+
+// ----------- FUNCTIONS ----------- //
+
+void receiveI2C(int howMany) {
+  while (Wire.available() > 0) {
+    dataFromI2C = Wire.read();
+  }
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    char inChar = (char)Serial.read();
+    inputString += inChar;
+    if (inChar == 'z') {
+    stringComplete = true;
+    }
+  }
+}

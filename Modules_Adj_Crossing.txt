@@ -1,0 +1,125 @@
+//--------------------------------------//
+//   CLUB.ARDUINORAILWAYCONTROL.COM     //
+//                                      //
+//   MODULES | Crossing Adjustments     //
+//   V.1.2019  Steve Massikker          //
+//--------------------------------------//
+
+#include <VarSpeedServo.h>
+
+VarSpeedServo barrier_1; 
+VarSpeedServo barrier_2;
+
+// I/O PINS
+#define LIGHT 7
+#define POWER_SERVO 4
+#define ALARM_1 16
+#define ALARM_2 17
+
+// VARIABLES
+String inputString = "";  
+static unsigned long millisPower;
+bool stringComplete = false; 
+bool alarmSignals, tick_blink;
+
+void setup() {
+
+// Initialize Serial (for debugging)
+  Serial.begin(9600);
+  inputString.reserve(4); 
+  Serial.println("Connected");  
+  
+// Initialize Servos
+  pinMode(14, OUTPUT);
+  pinMode(15, OUTPUT);  
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(LIGHT, OUTPUT);
+  pinMode(ALARM_1, OUTPUT);
+  pinMode(ALARM_2, OUTPUT);    
+  pinMode(POWER_SERVO, OUTPUT);
+  barrier_1.attach(14);
+  barrier_2.attach(15);  
+
+// DEFAULT POSITION - BARRIERS UP
+// SERVO 1 (HOUSE) UP: 165 | DOWN: 25
+// SERVO 2 (CORNER) UP: 170 | DOWN: 35
+// Speed 0 or 255: maximum, 1-254 from lower to higher speed
+  digitalWrite(POWER_SERVO, HIGH);
+  digitalWrite(LED_BUILTIN, HIGH);     
+  delay(30); 
+  barrier_1.write(180,32,false);
+  delay(30);   
+  barrier_2.write(180,32,false);  
+  millisPower = millis();     
+}
+
+void loop() {
+
+  if (stringComplete) {
+    
+    // BARRIERS DOWN
+    if (inputString.charAt(0) =='1') {
+      digitalWrite(POWER_SERVO, HIGH);
+      digitalWrite(LED_BUILTIN, HIGH);    
+      delay(30);  
+      barrier_1.write(30,32,false);
+      delay(30);   
+      barrier_2.write(35,44,false);
+      millisPower = millis();
+    }
+    
+    // BARRIERS UP
+    if (inputString.charAt(0) =='2') {
+      digitalWrite(POWER_SERVO, HIGH);
+      digitalWrite(LED_BUILTIN, HIGH);    
+      delay(30);  
+      barrier_1.write(180,32,false);
+      delay(30);   
+      barrier_2.write(180,44,false);
+      millisPower = millis(); 
+    }
+    
+    // ALARM
+    if (inputString.charAt(0) =='3') alarmSignals = true;
+    if (inputString.charAt(0) =='4') alarmSignals = false;
+    // LIGHT
+    if (inputString.charAt(0) =='5') digitalWrite(LIGHT, HIGH);
+    if (inputString.charAt(0) =='6') digitalWrite(LIGHT, LOW);
+    
+    inputString = "";
+    stringComplete = false;
+  }
+
+
+  // BLINK CODE
+  if (alarmSignals) {  
+    static unsigned long blinkMillis;
+    if  (millis() > (blinkMillis + 400)) { // Change 500 to your blinking optimal period
+      tick_blink = !tick_blink;
+      blinkMillis = millis();
+    }  
+
+    digitalWrite(ALARM_1, tick_blink);
+    digitalWrite(ALARM_2, !tick_blink);  
+  }
+  else {
+    digitalWrite(ALARM_1, LOW);
+    digitalWrite(ALARM_2, LOW);    
+  }
+
+  // POWER OFF CODE
+  if (millis() > (millisPower + 2500)) {
+    digitalWrite(POWER_SERVO, LOW);
+    digitalWrite(LED_BUILTIN, LOW);
+  } 
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    char inChar = (char)Serial.read();
+    inputString += inChar;
+    if (inChar == 'z') {
+    stringComplete = true;
+    }
+  }
+} 
